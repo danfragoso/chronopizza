@@ -7,4 +7,13 @@ export default defineConfig({
   worker: {
     format: 'es',
   },
+  build: {
+    target: 'esnext',
+    minify: 'esbuild',
+    rollupOptions: {
+      output: {
+        manualChunks: undefined, // Disable manual chunking to reduce memory
+      },
+    },
+  },
 })
