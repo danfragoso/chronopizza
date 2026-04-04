@@ -12,6 +12,10 @@ interface Props {
   loading:       boolean
   position:      number
   totalOps:      number
+  dbName:        string
+  onToggleBreakpoint: (dbName: string, tableName: string, rowId?: string) => void
+  onHasBreakpoint: (dbName: string, tableName: string, rowId?: string) => boolean
+  onViewRecordHistory: (tableName: string, rowId: string) => void
 }
 
 interface MetricCardProps {
@@ -37,7 +41,10 @@ function MetricCard({ icon, label, value, sub, color }: MetricCardProps) {
   )
 }
 
-export default function TablesView({ dbState, selectedTable, onSelectTable, onExport, loading, position, totalOps }: Props) {
+export default function TablesView({ 
+  dbState, selectedTable, onSelectTable, onExport, loading, position, totalOps,
+  dbName, onToggleBreakpoint, onHasBreakpoint, onViewRecordHistory 
+}: Props) {
   const metrics = useMemo(() => {
     if (!dbState) return null
     const tables    = Object.entries(dbState.tables)
@@ -83,6 +90,10 @@ export default function TablesView({ dbState, selectedTable, onSelectTable, onEx
         table={dbState.tables[selectedTable]}
         onBack={() => onSelectTable(null)}
         onExport={fmt => onExport(selectedTable, fmt)}
+        dbName={dbName}
+        onToggleBreakpoint={onToggleBreakpoint}
+        onHasBreakpoint={onHasBreakpoint}
+        onViewRecordHistory={onViewRecordHistory}
       />
     )
   }

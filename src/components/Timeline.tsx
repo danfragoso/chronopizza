@@ -1,7 +1,7 @@
 import { useCallback } from 'react'
 import {
   ChevronFirst, ChevronLast, ChevronLeft, ChevronRight,
-  SkipBack, SkipForward, Loader2
+  SkipBack, SkipForward, Loader2, Play, Pause, X, Filter
 } from 'lucide-react'
 import type { WALOperation } from '../lib/types'
 
@@ -11,9 +11,15 @@ interface Props {
   currentOp:        WALOperation | null
   milestones:       number[]
   loading:          boolean
+  isPlaying:        boolean
+  hasBreakpoints:   boolean
+  filteredTable:    { dbName: string; tableName: string; rowId?: string } | null
+  relevantPositions: number[]
   onPositionChange: (pos: number) => void
   onStep:           (delta: number) => void
   onJumpMilestone:  (dir: 'prev' | 'next') => void
+  onTogglePlay:     () => void
+  onClearFilter:    () => void
 }
 
 function fmtNum(n: number) { return n.toLocaleString() }
@@ -35,10 +41,12 @@ function keyTypeLabel(op: WALOperation | null): string {
 }
 
 export default function Timeline({
-  position, totalOps, currentOp, loading,
-  onPositionChange, onStep, onJumpMilestone,
+  position, totalOps, currentOp, loading, isPlaying, hasBreakpoints,
+  filteredTable, relevantPositions,
+  onPositionChange, onStep, onJumpMilestone, onTogglePlay, onClearFilter,
 }: Props) {
   const pct = totalOps > 1 ? (position / (totalOps - 1)) * 100 : 0
+  const isRelevant = !filteredTable || relevantPositions.includes(position)
 
   const handleSlider = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     onPositionChange(parseInt(e.target.value, 10))
@@ -60,7 +68,7 @@ export default function Timeline({
         <button
           className="btn btn-icon btn-ghost btn-sm hidden sm:flex"
           onClick={() => onStep(-position)}
-          disabled={position === 0}
+          disabled={position === 0 || isPlaying}
           title="Jump to start"
         >
           <ChevronFirst className="w-4 h-4" />
@@ -70,17 +78,29 @@ export default function Timeline({
         <button
           className="btn btn-icon btn-ghost btn-sm hidden sm:flex"
           onClick={() => onJumpMilestone('prev')}
-          disabled={position === 0}
+          disabled={position === 0 || isPlaying}
           title="Previous schema change"
         >
           <SkipBack className="w-4 h-4" />
         </button>
 
+        {/* play/pause — visible when breakpoints exist */}
+        {hasBreakpoints && (
+          <button
+            className="btn btn-icon btn-ghost btn-sm"
+            onClick={onTogglePlay}
+            disabled={position >= totalOps - 1}
+            title={isPlaying ? "Pause" : "Play (advance to next breakpoint)"}
+          >
+            {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+          </button>
+        )}
+
         {/* prev step — always visible */}
         <button
           className="btn btn-icon btn-ghost btn-sm"
           onClick={() => onStep(-1)}
-          disabled={position === 0}
+          disabled={position === 0 || isPlaying}
           title="Step back"
         >
           <ChevronLeft className="w-4 h-4" />
@@ -101,6 +121,7 @@ export default function Timeline({
             max={Math.max(0, totalOps - 1)}
             value={position}
             onChange={handleSlider}
+            disabled={isPlaying}
             className="timeline-slider relative w-full"
           />
         </div>
@@ -109,7 +130,7 @@ export default function Timeline({
         <button
           className="btn btn-icon btn-ghost btn-sm"
           onClick={() => onStep(1)}
-          disabled={position >= totalOps - 1}
+          disabled={position >= totalOps - 1 || isPlaying}
           title="Step forward"
         >
           <ChevronRight className="w-4 h-4" />
@@ -119,7 +140,7 @@ export default function Timeline({
         <button
           className="btn btn-icon btn-ghost btn-sm hidden sm:flex"
           onClick={() => onJumpMilestone('next')}
-          disabled={position >= totalOps - 1}
+          disabled={position >= totalOps - 1 || isPlaying}
           title="Next schema change"
         >
           <SkipForward className="w-4 h-4" />
@@ -129,7 +150,7 @@ export default function Timeline({
         <button
           className="btn btn-icon btn-ghost btn-sm hidden sm:flex"
           onClick={() => onStep(totalOps - 1 - position)}
-          disabled={position >= totalOps - 1}
+          disabled={position >= totalOps - 1 || isPlaying}
           title="Jump to end"
         >
           <ChevronLast className="w-4 h-4" />
@@ -144,7 +165,31 @@ export default function Timeline({
           {fmtNum(position + 1)}&thinsp;/&thinsp;{fmtNum(totalOps)}
         </span>
 
-        {currentOp && (
+        {filteredTable && (
+          <>
+            <div className="h-3 w-px bg-border shrink-0" />
+            <div className="flex items-center gap-1 shrink-0">
+              <Filter className="w-3 h-3 text-amber-500" />
+              <span className="text-amber-500 font-medium hidden sm:inline">
+                {filteredTable.rowId ? `Record: ${filteredTable.tableName}` : `Table: ${filteredTable.tableName}`}
+              </span>
+              <button
+                onClick={onClearFilter}
+                className="btn btn-icon btn-ghost ml-1"
+                style={{ width: 16, height: 16, padding: 2 }}
+                title="Clear filter"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </div>
+            <div className="h-3 w-px bg-border shrink-0" />
+            <span className={`font-medium shrink-0 ${isRelevant ? 'text-foreground' : 'text-muted-foreground/50'}`}>
+              {isRelevant ? '✓ Relevant' : 'Not relevant'}
+            </span>
+          </>
+        )}
+
+        {currentOp && !filteredTable && (
           <>
             <div className="h-3 w-px bg-border shrink-0" />
             <span className={`badge shrink-0 ${opBadgeClass(currentOp)}`} style={{ fontSize: 11 }}>

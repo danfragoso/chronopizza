@@ -73,12 +73,16 @@ export type ToWorker =
   | { type: 'getOperation'; index: number }
   | { type: 'exportDB'; dbName: string; position: number; format: 'json' | 'sql' }
   | { type: 'exportTable'; dbName: string; tableName: string; position: number; format: 'json' | 'sql' | 'csv' }
+  | { type: 'getRecordHistory'; dbName: string; tableName: string; rowId: string; maxPosition: number }
+  | { type: 'getRelevantPositions'; dbName: string; tableName: string; rowId?: string }
 
 export type FromWorker =
   | { type: 'progress'; percent: number; opsProcessed: number }
   | { type: 'parsed'; totalOps: number; dbNames: string[]; milestones: number[] }
   | { type: 'state'; data: AppDBState }
   | { type: 'export'; data: string; filename: string }
+  | { type: 'recordHistory'; history: RecordHistoryEntry[] }
+  | { type: 'relevantPositions'; positions: number[]; firstPosition: number }
   | { type: 'error'; message: string }
 
 // ── UI state ──────────────────────────────────────────────────────────────────
@@ -92,4 +96,20 @@ export interface Relation {
   fromColumn: string
   toTable: string
   toColumn: string
+}
+
+// ── Breakpoints & Record History ─────────────────────────────────────────────
+
+export interface Breakpoint {
+  id: string // unique id for the breakpoint
+  dbName: string
+  tableName: string
+  rowId?: string // if present, record-level breakpoint; otherwise table-level
+}
+
+export interface RecordHistoryEntry {
+  position: number
+  operation: WALOperation
+  before: Record<string, unknown> | null
+  after: Record<string, unknown> | null
 }

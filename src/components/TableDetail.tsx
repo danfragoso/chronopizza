@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, Check, Copy, Download, Key } from 'lucide-react'
+import { ArrowLeft, Check, Copy, Download, Key, Bookmark, Clock } from 'lucide-react'
 import type { TableState } from '../lib/types'
 
 interface Props {
@@ -7,6 +7,10 @@ interface Props {
   table:    TableState
   onBack:   () => void
   onExport: (format: 'json' | 'sql' | 'csv') => void
+  dbName:   string
+  onToggleBreakpoint: (dbName: string, tableName: string, rowId?: string) => void
+  onHasBreakpoint: (dbName: string, tableName: string, rowId?: string) => boolean
+  onViewRecordHistory: (tableName: string, rowId: string) => void
 }
 
 const TYPE_COLORS: Record<string, string> = {
@@ -30,12 +34,25 @@ const ROW_H    = 33
 // extra rows to render above/below the visible window
 const OVERSCAN = 8
 
-export default function TableDetail({ name, table, onBack, onExport }: Props) {
+export default function TableDetail({ name, table, onBack, onExport, dbName, onToggleBreakpoint, onHasBreakpoint, onViewRecordHistory }: Props) {
   const schema     = table.schema
   const cols       = schema?.columns ?? []
 
-  // Memoize row array — Object.values on 60k entries is expensive on every render
-  const rows = useMemo(() => Object.values(table.rows), [table.rows])
+  // Memoize row array and sort to put breakpointed rows first
+  const rows = useMemo(() => {
+    const rowsArray = Object.values(table.rows)
+    return rowsArray.sort((a, b) => {
+      const aRowId = schema?.primary_key ? String((a as Record<string, unknown>)[schema.primary_key]) : ''
+      const bRowId = schema?.primary_key ? String((b as Record<string, unknown>)[schema.primary_key]) : ''
+      const aHasBp = onHasBreakpoint(dbName, name, aRowId)
+      const bHasBp = onHasBreakpoint(dbName, name, bRowId)
+      
+      // Sort breakpointed rows to the top
+      if (aHasBp && !bHasBp) return -1
+      if (!aHasBp && bHasBp) return 1
+      return 0
+    })
+  }, [table.rows, schema, dbName, name, onHasBreakpoint])
 
   // Virtual scroll state
   const scrollRef  = useRef<HTMLDivElement>(null)
@@ -158,7 +175,7 @@ export default function TableDetail({ name, table, onBack, onExport }: Props) {
           <table className="data-table">
             <thead>
               <tr>
-                <th style={{ width: 32, padding: '0.5rem 0.25rem' }} />
+                <th style={{ width: 96, padding: '0.5rem 0.25rem' }} />
                 {cols.length > 0
                   ? cols.map(col => (
                       <th key={col.name}>
@@ -178,26 +195,54 @@ export default function TableDetail({ name, table, onBack, onExport }: Props) {
             <tbody>
               {/* top spacer */}
               {topPad > 0 && (
-                <tr aria-hidden><td colSpan={colKeys.length} style={{ height: topPad, padding: 0, border: 'none' }} /></tr>
+                <tr aria-hidden><td colSpan={colKeys.length + 1} style={{ height: topPad, padding: 0, border: 'none' }} /></tr>
               )}
 
               {visibleRows.map((row, i) => {
                 const r = row as Record<string, unknown>
+                const rowid = schema?.primary_key ? String(r[schema.primary_key]) : String(start + i)
+                const hasRowBreakpoint = onHasBreakpoint(dbName, name, rowid)
+
                 return (
-                  <tr key={start + i} className="group/row">
-                    {/* copy button cell */}
-                    <td style={{ padding: '0 0.25rem', width: 32, borderBottom: '1px solid var(--border)' }}>
-                      <button
-                        className="btn btn-icon btn-ghost btn-sm opacity-0 group-hover/row:opacity-100 transition-opacity"
-                        style={{ padding: '2px', width: 22, height: 22 }}
-                        onClick={() => copyRow(r, start + i)}
-                        title="Copy row as JSON"
-                      >
-                        {copiedIdx === start + i
-                          ? <Check className="w-3 h-3 text-primary" />
-                          : <Copy className="w-3 h-3" />
-                        }
-                      </button>
+                  <tr 
+                    key={start + i} 
+                    className="group/row"
+                    style={hasRowBreakpoint ? {
+                      borderLeft: '3px solid rgb(245 158 11)',
+                      backgroundColor: 'rgb(245 158 11 / 0.08)'
+                    } : undefined}
+                  >
+                    {/* action buttons cell */}
+                    <td style={{ padding: '0 0.25rem', width: 96, borderBottom: '1px solid var(--border)' }}>
+                      <div className="flex items-center gap-0.5 opacity-0 group-hover/row:opacity-100 transition-opacity">
+                        <button
+                          className="btn btn-icon btn-ghost btn-sm"
+                          style={{ padding: '2px', width: 22, height: 22 }}
+                          onClick={() => copyRow(r, start + i)}
+                          title="Copy row as JSON"
+                        >
+                          {copiedIdx === start + i
+                            ? <Check className="w-3 h-3 text-primary" />
+                            : <Copy className="w-3 h-3" />
+                          }
+                        </button>
+                        <button
+                          className={`btn btn-icon btn-ghost btn-sm ${hasRowBreakpoint ? 'text-amber-500' : ''}`}
+                          style={{ padding: '2px', width: 22, height: 22 }}
+                          onClick={() => onToggleBreakpoint(dbName, name, rowid)}
+                          title={hasRowBreakpoint ? "Remove breakpoint" : "Add breakpoint"}
+                        >
+                          <Bookmark className={`w-3 h-3 ${hasRowBreakpoint ? 'fill-current' : ''}`} />
+                        </button>
+                        <button
+                          className="btn btn-icon btn-ghost btn-sm"
+                          style={{ padding: '2px', width: 22, height: 22 }}
+                          onClick={() => onViewRecordHistory(name, rowid)}
+                          title="View record history"
+                        >
+                          <Clock className="w-3 h-3" />
+                        </button>
+                      </div>
                     </td>
                     {colKeys.map((key, j) => {
                       const cell = r[key]
@@ -217,7 +262,7 @@ export default function TableDetail({ name, table, onBack, onExport }: Props) {
 
               {/* bottom spacer */}
               {bottomPad > 0 && (
-                <tr aria-hidden><td colSpan={colKeys.length} style={{ height: bottomPad, padding: 0, border: 'none' }} /></tr>
+                <tr aria-hidden><td colSpan={colKeys.length + 1} style={{ height: bottomPad, padding: 0, border: 'none' }} /></tr>
               )}
             </tbody>
           </table>

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { AppDBState, AppView, ExplorerTab, FromWorker, ToWorker } from './lib/types'
+import type { AppDBState, AppView, Breakpoint, ExplorerTab, FromWorker, RecordHistoryEntry, ToWorker } from './lib/types'
 import FileUpload from './components/FileUpload'
 import LandingPage from './components/LandingPage'
 import Timeline from './components/Timeline'
@@ -7,6 +7,7 @@ import TablesView from './components/TablesView'
 import RelationsGraph from './components/RelationsGraph'
 import ExportDialog from './components/ExportDialog'
 import SearchOverlay from './components/SearchOverlay'
+import RecordHistory from './components/RecordHistory'
 import { Database, GitBranch, Moon, Network, Search, Sun, Table2 } from 'lucide-react'
 import ParserWorker from './workers/parser.worker?worker'
 
@@ -63,6 +64,19 @@ export default function App() {
   const [exportOpen, setExportOpen]   = useState(false)
   // search overlay
   const [searchOpen, setSearchOpen]   = useState(false)
+
+  // breakpoints & record history
+  const [breakpoints, setBreakpoints] = useState<Breakpoint[]>([])
+  const [isPlaying, setIsPlaying] = useState(false)
+  const [recordHistory, setRecordHistory] = useState<{ tableName: string; rowId: string; history: RecordHistoryEntry[] } | null>(null)
+  
+  // Timeline filtering
+  const [filteredTable, setFilteredTable] = useState<{ dbName: string; tableName: string; rowId?: string } | null>(null)
+  const [relevantPositions, setRelevantPositions] = useState<number[]>([])
+  const [filteredStartPosition, setFilteredStartPosition] = useState<number | null>(null)
+  
+  // Track position when play started to skip current breakpoint
+  const playStartPosition = useRef<number | null>(null)
 
   // Cmd/Ctrl+K → open search
   useEffect(() => {
@@ -130,6 +144,16 @@ export default function App() {
         return
       }
 
+      if (msg.type === 'recordHistory') {
+        // Handler will be set when requesting history
+        return
+      }
+
+      if (msg.type === 'relevantPositions') {
+        // Handler will be set when requesting relevant positions
+        return
+      }
+
       if (msg.type === 'error') {
         console.error('[worker]', msg.message)
         setView('upload')
@@ -183,6 +207,186 @@ export default function App() {
       return target
     })
   }, [milestones])
+
+  // ── Breakpoints ─────────────────────────────────────────────────────────────
+
+  const toggleBreakpoint = useCallback((dbName: string, tableName: string, rowId?: string) => {
+    setBreakpoints(prev => {
+      const id = `${dbName}::${tableName}${rowId ? `::${rowId}` : ''}`
+      const existing = prev.find(bp => bp.id === id)
+      if (existing) {
+        // Removing breakpoint - clear filter if it matches
+        if (filteredTable?.dbName === dbName && 
+            filteredTable?.tableName === tableName && 
+            filteredTable?.rowId === rowId) {
+          setFilteredTable(null)
+          setRelevantPositions([])
+          setFilteredStartPosition(null)
+        }
+        return prev.filter(bp => bp.id !== id)
+      } else {
+        // Adding breakpoint - activate filter if it's a record-level breakpoint
+        if (rowId && workerRef.current) {
+          setFilteredTable({ dbName, tableName, rowId })
+          
+          // Request relevant positions
+          const msg: ToWorker = {
+            type: 'getRelevantPositions',
+            dbName,
+            tableName,
+            rowId,
+          }
+          workerRef.current.postMessage(msg)
+          
+          // Set up handler for response
+          const currentWorker = workerRef.current
+          const originalOnMessage = currentWorker.onmessage
+          currentWorker.onmessage = (e: MessageEvent<FromWorker>) => {
+            const msgData = e.data
+            if (msgData.type === 'relevantPositions') {
+              setRelevantPositions(msgData.positions)
+              setFilteredStartPosition(msgData.firstPosition)
+              // Jump to creation of the record
+              if (msgData.firstPosition >= 0) {
+                setPosition(msgData.firstPosition)
+                requestState(msgData.firstPosition)
+              }
+              currentWorker.onmessage = originalOnMessage
+            } else if (originalOnMessage) {
+              originalOnMessage.call(currentWorker, e)
+            }
+          }
+        }
+        return [...prev, { id, dbName, tableName, rowId }]
+      }
+    })
+  }, [filteredTable])
+
+  const clearFilter = useCallback(() => {
+    setFilteredTable(null)
+    setRelevantPositions([])
+    setFilteredStartPosition(null)
+  }, [])
+
+  const hasBreakpoint = useCallback((dbName: string, tableName: string, rowId?: string) => {
+    const id = `${dbName}::${tableName}${rowId ? `::${rowId}` : ''}`
+    return breakpoints.some(bp => bp.id === id)
+  }, [breakpoints])
+
+  const checkBreakpoint = useCallback((op: WALOperation | null): boolean => {
+    if (!op || breakpoints.length === 0) return false
+    
+    // Check if operation matches any breakpoint
+    for (const bp of breakpoints) {
+      if (op.dbName !== bp.dbName) continue
+      
+      // For data operations, check table and optionally rowId
+      if (op.keyType === 'data') {
+        const [, tableName, rowId] = op.keyParts
+        if (tableName === bp.tableName) {
+          // If breakpoint has rowId, match it; otherwise match any row in the table
+          if (!bp.rowId || bp.rowId === rowId) {
+            return true
+          }
+        }
+      }
+      // Schema changes on the table
+      else if (op.keyType === 'schema') {
+        const tableName = op.keyParts[1]
+        if (tableName === bp.tableName && !bp.rowId) {
+          return true
+        }
+      }
+    }
+    return false
+  }, [breakpoints])
+
+  const togglePlay = useCallback(() => {
+    setIsPlaying(prev => {
+      if (!prev) {
+        // Starting playback - record current position to skip it
+        playStartPosition.current = position
+      } else {
+        // Stopping playback - clear the start position
+        playStartPosition.current = null
+      }
+      return !prev
+    })
+  }, [position])
+
+  // Auto-advance when playing
+  useEffect(() => {
+    if (!isPlaying) return
+
+    const interval = setInterval(() => {
+      setPosition(prev => {
+        // Stop if at the end
+        if (prev >= totalOps - 1) {
+          setIsPlaying(false)
+          return prev
+        }
+
+        const next = prev + 1
+        requestState(next)
+        return next
+      })
+    }, 100)
+
+    return () => clearInterval(interval)
+  }, [isPlaying, totalOps])
+
+  // Check for breakpoint after state loads
+  useEffect(() => {
+    if (!isPlaying) return
+    if (!dbState?.currentOp) return
+    
+    // Only pause if this position is AFTER where we started playing
+    const shouldPause = playStartPosition.current !== null && 
+                        position > playStartPosition.current &&
+                        checkBreakpoint(dbState.currentOp)
+    
+    if (shouldPause) {
+      setIsPlaying(false)
+      playStartPosition.current = null
+    }
+  }, [isPlaying, position, dbState, checkBreakpoint])
+
+  // ── Record History ──────────────────────────────────────────────────────────
+
+  const viewRecordHistory = useCallback((tableName: string, rowId: string) => {
+    if (!workerRef.current || !selectedDB) return
+    
+    const msg: ToWorker = {
+      type: 'getRecordHistory',
+      dbName: selectedDB,
+      tableName,
+      rowId,
+      maxPosition: position,
+    }
+    workerRef.current.postMessage(msg)
+    
+    // Set up a one-time handler for the response
+    const currentWorker = workerRef.current
+    const originalOnMessage = currentWorker.onmessage
+    currentWorker.onmessage = (e: MessageEvent<FromWorker>) => {
+      const msgData = e.data
+      if (msgData.type === 'recordHistory') {
+        setRecordHistory({
+          tableName,
+          rowId,
+          history: msgData.history,
+        })
+        // Restore original handler
+        currentWorker.onmessage = originalOnMessage
+      } else if (originalOnMessage) {
+        originalOnMessage.call(currentWorker, e)
+      }
+    }
+  }, [selectedDB, position])
+
+  const closeRecordHistory = useCallback(() => {
+    setRecordHistory(null)
+  }, [])
 
   // ── File upload ─────────────────────────────────────────────────────────────
 
@@ -348,14 +552,33 @@ export default function App() {
         currentOp={dbState?.currentOp ?? null}
         milestones={milestones}
         loading={stateLoading}
+        isPlaying={isPlaying}
+        hasBreakpoints={breakpoints.length > 0}
+        filteredTable={filteredTable}
+        relevantPositions={relevantPositions}
         onPositionChange={handlePositionChange}
         onStep={stepBy}
         onJumpMilestone={jumpToMilestone}
+        onTogglePlay={togglePlay}
+        onClearFilter={clearFilter}
       />
 
       {/* ── Main content ── */}
       <main className="flex-1 overflow-hidden">
-        {tab === 'tables' && (
+        {recordHistory ? (
+          <RecordHistory
+            tableName={recordHistory.tableName}
+            rowId={recordHistory.rowId}
+            history={recordHistory.history}
+            onBack={closeRecordHistory}
+            onJumpToPosition={(pos) => {
+              closeRecordHistory()
+              setPosition(pos)
+              requestState(pos)
+            }}
+            currentPosition={position}
+          />
+        ) : tab === 'tables' ? (
           <TablesView
             dbState={currentDB ?? null}
             selectedTable={selectedTable}
@@ -364,14 +587,20 @@ export default function App() {
             loading={stateLoading}
             position={position}
             totalOps={totalOps}
+            dbName={selectedDB}
+            onToggleBreakpoint={toggleBreakpoint}
+            onHasBreakpoint={hasBreakpoint}
+            onViewRecordHistory={viewRecordHistory}
           />
-        )}
-
-        {tab === 'relations' && (
+        ) : tab === 'relations' ? (
           <RelationsGraph
             dbState={currentDB ?? null}
             onSelectTable={t => { setTab('tables'); setSelectedTable(t) }}
           />
+        ) : (
+          <div className="h-full flex items-center justify-center">
+            <p className="text-muted-foreground">Raw KV view coming soon</p>
+          </div>
         )}
 
         {tab === 'raw' && (

@@ -18,6 +18,7 @@ import type {
   IndexDef,
   ToWorker,
   FromWorker,
+  RecordHistoryEntry,
 } from '../lib/types'
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -327,6 +328,111 @@ function exportTableAsSQL(dbName: string, tableName: string, position: number): 
   return sql
 }
 
+function getRecordHistory(dbName: string, tableName: string, rowId: string, maxPosition: number) {
+  const recordKey = `${dbName}:_data:${tableName}:${rowId}`
+  const opIndices = keyTimeline.get(recordKey)
+  
+  if (!opIndices) {
+    return []
+  }
+
+  const history: {
+    position: number
+    operation: WALOperation
+    before: Record<string, unknown> | null
+    after: Record<string, unknown> | null
+  }[] = []
+
+  // Filter operations up to maxPosition
+  const relevantOps = opIndices.filter(idx => idx <= maxPosition)
+
+  for (let i = 0; i < relevantOps.length; i++) {
+    const opIdx = relevantOps[i]
+    const op = operations[opIdx]
+
+    // Build state before this operation
+    const beforePosition = i > 0 ? relevantOps[i - 1] : -1
+    let before: Record<string, unknown> | null = null
+    
+    if (beforePosition >= 0) {
+      const beforeOp = operations[beforePosition]
+      if (beforeOp.op === 'W') {
+        try {
+          const rawValue = decoder.decode(buffer.subarray(beforeOp.valueStart, beforeOp.valueEnd))
+          before = JSON.parse(rawValue) as Record<string, unknown>
+        } catch { /* malformed */ }
+      }
+    }
+
+    // Build state after this operation
+    let after: Record<string, unknown> | null = null
+    if (op.op === 'W') {
+      try {
+        const rawValue = decoder.decode(buffer.subarray(op.valueStart, op.valueEnd))
+        after = JSON.parse(rawValue) as Record<string, unknown>
+      } catch { /* malformed */ }
+    }
+
+    history.push({
+      position: opIdx,
+      operation: op,
+      before,
+      after,
+    })
+  }
+
+  return history
+}
+
+function getRelevantPositions(dbName: string, tableName: string, rowId?: string) {
+  const positions: number[] = []
+  let firstPosition = -1
+
+  if (rowId) {
+    // Get positions for specific record
+    const recordKey = `${dbName}:_data:${tableName}:${rowId}`
+    const opIndices = keyTimeline.get(recordKey)
+    
+    if (opIndices && opIndices.length > 0) {
+      positions.push(...opIndices)
+      firstPosition = opIndices[0]
+    }
+    
+    // Also include schema changes for this table
+    const schemaKey = `${dbName}:_schema:${tableName}`
+    const schemaIndices = keyTimeline.get(schemaKey)
+    if (schemaIndices) {
+      positions.push(...schemaIndices)
+    }
+  } else {
+    // Get all positions for table (schema + all data operations)
+    const schemaKey = `${dbName}:_schema:${tableName}`
+    const schemaIndices = keyTimeline.get(schemaKey)
+    if (schemaIndices) {
+      positions.push(...schemaIndices)
+      if (firstPosition === -1 || (schemaIndices[0] < firstPosition)) {
+        firstPosition = schemaIndices[0]
+      }
+    }
+    
+    // Get all data operations for this table
+    for (const [key, opIndices] of keyTimeline) {
+      if (key.startsWith(`${dbName}:_data:${tableName}:`)) {
+        positions.push(...opIndices)
+        if (firstPosition === -1 || (opIndices[0] < firstPosition)) {
+          firstPosition = opIndices[0]
+        }
+      }
+    }
+  }
+
+  // Sort and deduplicate
+  return {
+    positions: [...new Set(positions)].sort((a, b) => a - b),
+    firstPosition,
+  }
+}
+
 // ── Message handler ───────────────────────────────────────────────────────────
 
 self.onmessage = async (e: MessageEvent<ToWorker>) => {
@@ -389,6 +495,33 @@ self.onmessage = async (e: MessageEvent<ToWorker>) => {
       data,
       filename: `${msg.tableName}_pos${msg.position}.${ext}`,
     } satisfies FromWorker)
+    return
+  }
+
+  if (msg.type === 'getRecordHistory') {
+    try {
+      const history = getRecordHistory(msg.dbName, msg.tableName, msg.rowId, msg.maxPosition)
+      postMessage({
+        type: 'recordHistory',
+        history,
+      } satisfies FromWorker)
+    } catch (err) {
+      postMessage({ type: 'error', message: String(err) } satisfies FromWorker)
+    }
+    return
+  }
+
+  if (msg.type === 'getRelevantPositions') {
+    try {
+      const { positions, firstPosition } = getRelevantPositions(msg.dbName, msg.tableName, msg.rowId)
+      postMessage({
+        type: 'relevantPositions',
+        positions,
+        firstPosition,
+      } satisfies FromWorker)
+    } catch (err) {
+      postMessage({ type: 'error', message: String(err) } satisfies FromWorker)
+    }
     return
   }
 }
