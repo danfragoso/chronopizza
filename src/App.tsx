@@ -68,6 +68,7 @@ export default function App() {
   // breakpoints & record history
   const [breakpoints, setBreakpoints] = useState<Breakpoint[]>([])
   const [isPlaying, setIsPlaying] = useState(false)
+  const [isPlayingBackward, setIsPlayingBackward] = useState(false)
   const [recordHistory, setRecordHistory] = useState<{ tableName: string; rowId: string; history: RecordHistoryEntry[] } | null>(null)
   
   // Timeline filtering
@@ -304,10 +305,21 @@ export default function App() {
   const togglePlay = useCallback(() => {
     setIsPlaying(prev => {
       if (!prev) {
-        // Starting playback - record current position to skip it
+        setIsPlayingBackward(false)
         playStartPosition.current = position
       } else {
-        // Stopping playback - clear the start position
+        playStartPosition.current = null
+      }
+      return !prev
+    })
+  }, [position])
+
+  const togglePlayBackward = useCallback(() => {
+    setIsPlayingBackward(prev => {
+      if (!prev) {
+        setIsPlaying(false)
+        playStartPosition.current = position
+      } else {
         playStartPosition.current = null
       }
       return !prev
@@ -320,7 +332,6 @@ export default function App() {
 
     const interval = setInterval(() => {
       setPosition(prev => {
-        // Stop if at the end
         if (prev >= totalOps - 1) {
           setIsPlaying(false)
           return prev
@@ -330,26 +341,60 @@ export default function App() {
         requestState(next)
         return next
       })
-    }, 100)
+    }, 13)
 
     return () => clearInterval(interval)
   }, [isPlaying, totalOps])
+
+  // Auto-rewind when playing backward
+  useEffect(() => {
+    if (!isPlayingBackward) return
+
+    const interval = setInterval(() => {
+      setPosition(prev => {
+        if (prev <= 0) {
+          setIsPlayingBackward(false)
+          return prev
+        }
+
+        const next = prev - 1
+        requestState(next)
+        return next
+      })
+    }, 13)
+
+    return () => clearInterval(interval)
+  }, [isPlayingBackward])
 
   // Check for breakpoint after state loads
   useEffect(() => {
     if (!isPlaying) return
     if (!dbState?.currentOp) return
-    
-    // Only pause if this position is AFTER where we started playing
-    const shouldPause = playStartPosition.current !== null && 
+
+    const shouldPause = playStartPosition.current !== null &&
                         position > playStartPosition.current &&
                         checkBreakpoint(dbState.currentOp)
-    
+
     if (shouldPause) {
       setIsPlaying(false)
       playStartPosition.current = null
     }
   }, [isPlaying, position, dbState, checkBreakpoint])
+
+  // Check for breakpoint when playing backward
+  useEffect(() => {
+    if (!isPlayingBackward) return
+    if (!dbState?.currentOp) return
+
+    const shouldPause = playStartPosition.current !== null &&
+                        position < playStartPosition.current &&
+                        checkBreakpoint(dbState.currentOp)
+
+    if (shouldPause) {
+      setIsPlayingBackward(false)
+      playStartPosition.current = null
+    }
+  }, [isPlayingBackward, position, dbState, checkBreakpoint])
 
   // ── Record History ──────────────────────────────────────────────────────────
 
@@ -553,6 +598,7 @@ export default function App() {
         milestones={milestones}
         loading={stateLoading}
         isPlaying={isPlaying}
+        isPlayingBackward={isPlayingBackward}
         hasBreakpoints={breakpoints.length > 0}
         filteredTable={filteredTable}
         relevantPositions={relevantPositions}
@@ -560,6 +606,7 @@ export default function App() {
         onStep={stepBy}
         onJumpMilestone={jumpToMilestone}
         onTogglePlay={togglePlay}
+        onTogglePlayBackward={togglePlayBackward}
         onClearFilter={clearFilter}
       />
 

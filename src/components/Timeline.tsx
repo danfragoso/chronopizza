@@ -6,20 +6,22 @@ import {
 import type { WALOperation } from '../lib/types'
 
 interface Props {
-  position:         number
-  totalOps:         number
-  currentOp:        WALOperation | null
-  milestones:       number[]
-  loading:          boolean
-  isPlaying:        boolean
-  hasBreakpoints:   boolean
-  filteredTable:    { dbName: string; tableName: string; rowId?: string } | null
-  relevantPositions: number[]
-  onPositionChange: (pos: number) => void
-  onStep:           (delta: number) => void
-  onJumpMilestone:  (dir: 'prev' | 'next') => void
-  onTogglePlay:     () => void
-  onClearFilter:    () => void
+  position:              number
+  totalOps:              number
+  currentOp:             WALOperation | null
+  milestones:            number[]
+  loading:               boolean
+  isPlaying:             boolean
+  isPlayingBackward:     boolean
+  hasBreakpoints:        boolean
+  filteredTable:         { dbName: string; tableName: string; rowId?: string } | null
+  relevantPositions:     number[]
+  onPositionChange:      (pos: number) => void
+  onStep:                (delta: number) => void
+  onJumpMilestone:       (dir: 'prev' | 'next') => void
+  onTogglePlay:          () => void
+  onTogglePlayBackward:  () => void
+  onClearFilter:         () => void
 }
 
 function fmtNum(n: number) { return n.toLocaleString() }
@@ -41,10 +43,11 @@ function keyTypeLabel(op: WALOperation | null): string {
 }
 
 export default function Timeline({
-  position, totalOps, currentOp, loading, isPlaying, hasBreakpoints,
+  position, totalOps, currentOp, loading, isPlaying, isPlayingBackward, hasBreakpoints,
   filteredTable, relevantPositions,
-  onPositionChange, onStep, onJumpMilestone, onTogglePlay, onClearFilter,
+  onPositionChange, onStep, onJumpMilestone, onTogglePlay, onTogglePlayBackward, onClearFilter,
 }: Props) {
+  const isAnyPlaying = isPlaying || isPlayingBackward
   const pct = totalOps > 1 ? (position / (totalOps - 1)) * 100 : 0
   const isRelevant = !filteredTable || relevantPositions.includes(position)
 
@@ -68,7 +71,7 @@ export default function Timeline({
         <button
           className="btn btn-icon btn-ghost btn-sm hidden sm:flex"
           onClick={() => onStep(-position)}
-          disabled={position === 0 || isPlaying}
+          disabled={position === 0 || isAnyPlaying}
           title="Jump to start"
         >
           <ChevronFirst className="w-4 h-4" />
@@ -78,21 +81,21 @@ export default function Timeline({
         <button
           className="btn btn-icon btn-ghost btn-sm hidden sm:flex"
           onClick={() => onJumpMilestone('prev')}
-          disabled={position === 0 || isPlaying}
+          disabled={position === 0 || isAnyPlaying}
           title="Previous schema change"
         >
           <SkipBack className="w-4 h-4" />
         </button>
 
-        {/* play/pause — visible when breakpoints exist */}
+        {/* play backward — visible when breakpoints exist */}
         {hasBreakpoints && (
           <button
             className="btn btn-icon btn-ghost btn-sm"
-            onClick={onTogglePlay}
-            disabled={position >= totalOps - 1}
-            title={isPlaying ? "Pause" : "Play (advance to next breakpoint)"}
+            onClick={onTogglePlayBackward}
+            disabled={position <= 0}
+            title={isPlayingBackward ? "Pause" : "Play backward (to previous breakpoint)"}
           >
-            {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+            {isPlayingBackward ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" style={{ transform: 'scaleX(-1)' }} />}
           </button>
         )}
 
@@ -100,7 +103,7 @@ export default function Timeline({
         <button
           className="btn btn-icon btn-ghost btn-sm"
           onClick={() => onStep(-1)}
-          disabled={position === 0 || isPlaying}
+          disabled={position === 0 || isAnyPlaying}
           title="Step back"
         >
           <ChevronLeft className="w-4 h-4" />
@@ -121,7 +124,7 @@ export default function Timeline({
             max={Math.max(0, totalOps - 1)}
             value={position}
             onChange={handleSlider}
-            disabled={isPlaying}
+            disabled={isAnyPlaying}
             className="timeline-slider relative w-full"
           />
         </div>
@@ -130,17 +133,29 @@ export default function Timeline({
         <button
           className="btn btn-icon btn-ghost btn-sm"
           onClick={() => onStep(1)}
-          disabled={position >= totalOps - 1 || isPlaying}
+          disabled={position >= totalOps - 1 || isAnyPlaying}
           title="Step forward"
         >
           <ChevronRight className="w-4 h-4" />
         </button>
 
+        {/* play forward — visible when breakpoints exist */}
+        {hasBreakpoints && (
+          <button
+            className="btn btn-icon btn-ghost btn-sm"
+            onClick={onTogglePlay}
+            disabled={position >= totalOps - 1}
+            title={isPlaying ? "Pause" : "Play (advance to next breakpoint)"}
+          >
+            {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+          </button>
+        )}
+
         {/* next milestone — hidden on mobile */}
         <button
           className="btn btn-icon btn-ghost btn-sm hidden sm:flex"
           onClick={() => onJumpMilestone('next')}
-          disabled={position >= totalOps - 1 || isPlaying}
+          disabled={position >= totalOps - 1 || isAnyPlaying}
           title="Next schema change"
         >
           <SkipForward className="w-4 h-4" />
@@ -150,7 +165,7 @@ export default function Timeline({
         <button
           className="btn btn-icon btn-ghost btn-sm hidden sm:flex"
           onClick={() => onStep(totalOps - 1 - position)}
-          disabled={position >= totalOps - 1 || isPlaying}
+          disabled={position >= totalOps - 1 || isAnyPlaying}
           title="Jump to end"
         >
           <ChevronLast className="w-4 h-4" />
