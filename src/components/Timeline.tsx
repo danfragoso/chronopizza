@@ -1,7 +1,7 @@
 import { useCallback } from 'react'
 import {
   ChevronFirst, ChevronLast, ChevronLeft, ChevronRight,
-  SkipBack, SkipForward, Loader2, Play, Pause, X, Filter
+  SkipBack, SkipForward, Play, Pause, X, Filter
 } from 'lucide-react'
 import type { WALOperation } from '../lib/types'
 
@@ -10,7 +10,6 @@ interface Props {
   totalOps:              number
   currentOp:             WALOperation | null
   milestones:            number[]
-  loading:               boolean
   isPlaying:             boolean
   isPlayingBackward:     boolean
   hasBreakpoints:        boolean
@@ -43,7 +42,7 @@ function keyTypeLabel(op: WALOperation | null): string {
 }
 
 export default function Timeline({
-  position, totalOps, currentOp, loading, isPlaying, isPlayingBackward, hasBreakpoints,
+  position, totalOps, currentOp, isPlaying, isPlayingBackward, hasBreakpoints,
   filteredTable, relevantPositions,
   onPositionChange, onStep, onJumpMilestone, onTogglePlay, onTogglePlayBackward, onClearFilter,
 }: Props) {
@@ -174,8 +173,6 @@ export default function Timeline({
 
       {/* info row */}
       <div className="flex items-center gap-2 text-muted-foreground overflow-hidden" style={{ fontSize: 13 }}>
-        {loading && <Loader2 className="w-3 h-3 animate-spin text-primary shrink-0" />}
-
         <span className="font-mono tabular-nums shrink-0">
           {fmtNum(position + 1)}&thinsp;/&thinsp;{fmtNum(totalOps)}
         </span>
