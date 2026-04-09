@@ -86,17 +86,15 @@ export default function Timeline({
           <SkipBack className="w-4 h-4" />
         </button>
 
-        {/* play backward — visible when breakpoints exist */}
-        {hasBreakpoints && (
-          <button
-            className="btn btn-icon btn-ghost btn-sm"
-            onClick={onTogglePlayBackward}
-            disabled={position <= 0}
-            title={isPlayingBackward ? "Pause" : "Play backward (to previous breakpoint)"}
-          >
-            {isPlayingBackward ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" style={{ transform: 'scaleX(-1)' }} />}
-          </button>
-        )}
+        {/* play backward — always visible */}
+        <button
+          className="btn btn-icon btn-ghost btn-sm"
+          onClick={onTogglePlayBackward}
+          disabled={position <= 0}
+          title={isPlayingBackward ? "Pause" : hasBreakpoints ? "Play backward (to previous breakpoint)" : "Play backward"}
+        >
+          {isPlayingBackward ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" style={{ transform: 'scaleX(-1)' }} />}
+        </button>
 
         {/* prev step — always visible */}
         <button
@@ -138,17 +136,15 @@ export default function Timeline({
           <ChevronRight className="w-4 h-4" />
         </button>
 
-        {/* play forward — visible when breakpoints exist */}
-        {hasBreakpoints && (
-          <button
-            className="btn btn-icon btn-ghost btn-sm"
-            onClick={onTogglePlay}
-            disabled={position >= totalOps - 1}
-            title={isPlaying ? "Pause" : "Play (advance to next breakpoint)"}
-          >
-            {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-          </button>
-        )}
+        {/* play forward — always visible */}
+        <button
+          className="btn btn-icon btn-ghost btn-sm"
+          onClick={onTogglePlay}
+          disabled={position >= totalOps - 1}
+          title={isPlaying ? "Pause" : hasBreakpoints ? "Play (advance to next breakpoint)" : "Play forward"}
+        >
+          {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+        </button>
 
         {/* next milestone — hidden on mobile */}
         <button

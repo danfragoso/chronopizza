@@ -524,4 +524,9 @@ self.onmessage = async (e: MessageEvent<ToWorker>) => {
     }
     return
   }
+
+  if (msg.type === 'getOperations') {
+    postMessage({ type: 'operations', ops: operations } satisfies FromWorker)
+    return
+  }
 }

@@ -71,6 +71,7 @@ export type ToWorker =
   | { type: 'parse'; file: File }
   | { type: 'getState'; position: number }
   | { type: 'getOperation'; index: number }
+  | { type: 'getOperations' }
   | { type: 'exportDB'; dbName: string; position: number; format: 'json' | 'sql' }
   | { type: 'exportTable'; dbName: string; tableName: string; position: number; format: 'json' | 'sql' | 'csv' }
   | { type: 'getRecordHistory'; dbName: string; tableName: string; rowId: string; maxPosition: number }
@@ -80,6 +81,7 @@ export type FromWorker =
   | { type: 'progress'; percent: number; opsProcessed: number }
   | { type: 'parsed'; totalOps: number; dbNames: string[]; milestones: number[] }
   | { type: 'state'; data: AppDBState }
+  | { type: 'operations'; ops: WALOperation[] }
   | { type: 'export'; data: string; filename: string }
   | { type: 'recordHistory'; history: RecordHistoryEntry[] }
   | { type: 'relevantPositions'; positions: number[]; firstPosition: number }
@@ -88,7 +90,7 @@ export type FromWorker =
 // ── UI state ──────────────────────────────────────────────────────────────────
 
 export type AppView = 'upload' | 'loading' | 'explorer'
-export type ExplorerTab = 'tables' | 'relations' | 'raw'
+export type ExplorerTab = 'tables' | 'relations' | 'allrecords' | 'insights'
 
 // Detected FK relation between two tables
 export interface Relation {

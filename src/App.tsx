@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { AppDBState, AppView, Breakpoint, ExplorerTab, FromWorker, RecordHistoryEntry, ToWorker } from './lib/types'
+import type { AppDBState, AppView, Breakpoint, ExplorerTab, FromWorker, RecordHistoryEntry, ToWorker, WALOperation } from './lib/types'
 import FileUpload from './components/FileUpload'
 import LandingPage from './components/LandingPage'
 import Timeline from './components/Timeline'
 import TablesView from './components/TablesView'
 import RelationsGraph from './components/RelationsGraph'
+import AllRecordsView from './components/AllRecordsView'
+import InsightsView from './components/InsightsView'
 import ExportDialog from './components/ExportDialog'
 import SearchOverlay from './components/SearchOverlay'
 import RecordHistory from './components/RecordHistory'
-import { Database, GitBranch, Moon, Network, Search, Sun, Table2 } from 'lucide-react'
+import { BarChart2, Database, GitBranch, Moon, Network, Search, Sun, Table2 } from 'lucide-react'
 import ParserWorker from './workers/parser.worker?worker'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -59,6 +61,9 @@ export default function App() {
   const [selectedDB, setSelectedDB]   = useState('')
   const [selectedTable, setSelectedTable] = useState<string | null>(null)
   const [stateLoading, setStateLoading] = useState(false)
+
+  // all operations (for all records view)
+  const [allOps, setAllOps]           = useState<WALOperation[]>([])
 
   // export dialog
   const [exportOpen, setExportOpen]   = useState(false)
@@ -131,6 +136,11 @@ export default function App() {
       if (msg.type === 'state') {
         setDbState(msg.data)
         setStateLoading(false)
+        return
+      }
+
+      if (msg.type === 'operations') {
+        setAllOps(msg.ops)
         return
       }
 
@@ -538,13 +548,19 @@ export default function App() {
         {/* View tabs */}
         <nav className="flex items-center gap-0.5">
           {([
-            { id: 'tables',    icon: Table2,    label: 'Tables' },
-            { id: 'relations', icon: Network,   label: 'Relations' },
-            { id: 'raw',       icon: GitBranch, label: 'Raw KV' },
+            { id: 'tables',     icon: Table2,    label: 'Tables' },
+            { id: 'relations',  icon: Network,   label: 'Relations' },
+            { id: 'allrecords', icon: GitBranch, label: 'All Records' },
+            { id: 'insights',   icon: BarChart2, label: 'Insights' },
           ] as { id: ExplorerTab; icon: typeof Table2; label: string }[]).map(({ id, icon: Icon, label }) => (
             <button
               key={id}
-              onClick={() => setTab(id)}
+              onClick={() => {
+                setTab(id)
+                if ((id === 'allrecords' || id === 'insights') && allOps.length === 0 && workerRef.current) {
+                  workerRef.current.postMessage({ type: 'getOperations' } satisfies ToWorker)
+                }
+              }}
               className={`btn btn-sm btn-ghost flex items-center gap-1.5 ${tab === id ? 'bg-muted text-foreground' : 'text-muted-foreground'}`}
             >
               <Icon className="w-4 h-4" />
@@ -644,14 +660,20 @@ export default function App() {
             dbState={currentDB ?? null}
             onSelectTable={t => { setTab('tables'); setSelectedTable(t) }}
           />
+        ) : tab === 'insights' ? (
+          <InsightsView
+            dbState={dbState}
+            allOps={allOps}
+          />
         ) : (
-          <div className="h-full flex items-center justify-center">
-            <p className="text-muted-foreground">Raw KV view coming soon</p>
-          </div>
-        )}
-
-        {tab === 'raw' && (
-          <RawKVView db={currentDB ?? null} />
+          <AllRecordsView
+            ops={allOps}
+            position={position}
+            onJumpToPosition={(pos) => {
+              setPosition(pos)
+              requestState(pos)
+            }}
+          />
         )}
       </main>
 
@@ -678,36 +700,6 @@ export default function App() {
   )
 }
 
-// ── Raw KV view ───────────────────────────────────────────────────────────────
-
-function RawKVView({ db }: { db: { rawKeys: Record<string, string> } | null }) {
-  if (!db) return <EmptyState message="No database selected" />
-  const entries = Object.entries(db.rawKeys)
-  if (!entries.length) return <EmptyState message="No raw KV entries at this position" />
-
-  return (
-    <div className="h-full overflow-auto p-4">
-      <div className="card overflow-hidden">
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>Key</th>
-              <th>Value</th>
-            </tr>
-          </thead>
-          <tbody>
-            {entries.map(([key, val]) => (
-              <tr key={key}>
-                <td className="font-mono text-xs max-w-64">{key}</td>
-                <td className="font-mono text-xs text-muted-foreground">{val.slice(0, 200)}{val.length > 200 ? '…' : ''}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  )
-}
 
 function EmptyState({ message }: { message: string }) {
   return (
